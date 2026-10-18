@@ -1,0 +1,10 @@
+[build]
+  base = "student-dashboard"
+  publish = "student-dashboard/dist"
+  command = "npm install && npm run build"
+
+[functions]
+  directory = "student-dashboard/netlify/functions"
+
+[dev]
+  port = 5173
