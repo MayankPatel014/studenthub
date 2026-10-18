@@ -31,7 +31,11 @@ type View = "overview" | "students" | "courses" | "reports";
 // ============================================================================
 
 // The backend API address (can be changed with an environment variable)
-const API_BASE = ((import.meta as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+const API_BASE = (
+  (import.meta as { env?: { STUDENT_API_URL?: string; VITE_API_BASE_URL?: string } }).env?.STUDENT_API_URL
+  || (import.meta as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL
+  || "http://127.0.0.1:8000"
+).replace(/\/$/, "");
 
 // Empty form values (used when creating a new student)
 const emptyForm: StudentForm = { name: "", date_of_birth: "", email: "", phone: "", course: "" };

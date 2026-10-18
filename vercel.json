@@ -1,0 +1,25 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "ewb-student-crud-api": {
+      "root": "ewb-student-crud-api",
+      "framework": "fastapi",
+      "buildCommand": "pip install -r requirements.txt",
+      "devCommand": "uvicorn app.main:app --reload --host 0.0.0.0 --port $PORT"
+    },
+    "student-dashboard": {
+      "root": "student-dashboard",
+      "framework": "vite",
+      "buildCommand": "npm install && npm run build",
+      "devCommand": "npm run dev",
+      "outputDirectory": "dist",
+      "bindings": [
+        { "type": "service", "service": "ewb-student-crud-api", "format": "url", "env": "STUDENT_API_URL" }
+      ]
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": { "service": "ewb-student-crud-api" } },
+    { "source": "/(.*)", "destination": { "service": "student-dashboard" } }
+  ]
+}
