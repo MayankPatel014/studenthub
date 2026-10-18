@@ -14,6 +14,7 @@ router = APIRouter(prefix="/students", tags=["students"])
 
 
 # CREATE - Add a new student
+@router.post("", response_model=schemas.StudentOut, status_code=201, include_in_schema=False)
 @router.post("/", response_model=schemas.StudentOut, status_code=201)
 def create_student(student: schemas.StudentCreate, db: Session = Depends(get_db)):
     # Check if the email is already used (emails must be unique)
@@ -30,6 +31,7 @@ def create_student(student: schemas.StudentCreate, db: Session = Depends(get_db)
 
 
 # READ - Get all students
+@router.get("", response_model=List[schemas.StudentOut], include_in_schema=False)
 @router.get("/", response_model=List[schemas.StudentOut])
 def list_students(db: Session = Depends(get_db)):
     return db.query(models.Student).all()
@@ -54,6 +56,15 @@ def update_student(
     db_student = db.query(models.Student).filter(models.Student.id == student_id).first()
     if not db_student:
         raise HTTPException(status_code=404, detail="Student not found")
+
+    # If email is being changed, ensure it's not already in use by another student
+    if student.email is not None and student.email != db_student.email:
+        conflict = db.query(models.Student).filter(
+            models.Student.email == student.email,
+            models.Student.id != student_id
+        ).first()
+        if conflict:
+            raise HTTPException(status_code=400, detail="Email already registered")
 
     # Only update the fields that were actually provided
     update_data = student.model_dump(exclude_unset=True)

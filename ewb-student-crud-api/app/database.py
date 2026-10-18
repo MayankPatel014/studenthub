@@ -5,8 +5,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# The database file will be stored as students.db in the backend folder
-SQLALCHEMY_DATABASE_URL = "sqlite:///./students.db"
+from pathlib import Path
+
+# The database file is stored in the backend folder (ewb-student-crud-api)
+DB_PATH = Path(__file__).resolve().parent.parent / "students.db"
+SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH.as_posix()}"
 
 # Create the engine that connects to the database
 # check_same_thread=False is needed for SQLite with FastAPI

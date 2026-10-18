@@ -1,19 +1,16 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode, type SVGProps } from "react";
+import {
+  type Student,
+  getStudents,
+  createStudent,
+  updateStudent,
+  deleteStudent,
+} from "./api";
 
 // ============================================================================
 // TYPES
 // These define the shape of our data
 // ============================================================================
-
-type Student = {
-  id: number | string;
-  name: string;
-  date_of_birth?: string | null;
-  email: string;
-  phone: string;
-  course: string;
-  age?: number | null;
-};
 
 type StudentForm = {
   name: string;
@@ -26,39 +23,8 @@ type StudentForm = {
 // The four pages/views of the dashboard
 type View = "overview" | "students" | "courses" | "reports";
 
-// ============================================================================
-// API SETTINGS
-// ============================================================================
-
-// The backend API address (can be changed with an environment variable)
-const API_BASE = (
-  (import.meta as { env?: { STUDENT_API_URL?: string; VITE_API_BASE_URL?: string } }).env?.STUDENT_API_URL
-  || (import.meta as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL
-  || "http://127.0.0.1:8000"
-).replace(/\/$/, "");
-
 // Empty form values (used when creating a new student)
 const emptyForm: StudentForm = { name: "", date_of_birth: "", email: "", phone: "", course: "" };
-
-// Helper function to make API requests to the backend
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: { ...(init?.body ? { "Content-Type": "application/json" } : {}), ...init?.headers },
-  });
-  if (!response.ok) {
-    let message = `Request failed (${response.status})`;
-    try {
-      const data = await response.json();
-      message = data.detail
-        ? typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)
-        : message;
-    } catch { /* Keep the HTTP error message. */ }
-    throw new Error(message);
-  }
-  if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
-}
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -67,7 +33,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 // Calculate age from date of birth
 function getAge(dob?: string | null) {
   if (!dob) return null;
-  const birth = new Date(`${dob}T00:00:00`);
+  const cleanDob = dob.split("T")[0];
+  const birth = new Date(`${cleanDob}T00:00:00`);
   if (Number.isNaN(birth.getTime())) return null;
   const today = new Date();
   let age = today.getFullYear() - birth.getFullYear();
@@ -113,6 +80,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);                 // Are we loading data?
   const [error, setError] = useState("");                        // Error message (if any)
   const [notice, setNotice] = useState("");                     // Success message (if any)
+  const [modalError, setModalError] = useState("");             // Form error in modal
   const [query, setQuery] = useState("");                       // Search text
   const [courseFilter, setCourseFilter] = useState("all");      // Selected course filter
   const [page, setPage] = useState(1);                          // Current page number
@@ -122,9 +90,15 @@ export default function App() {
   const [deleting, setDeleting] = useState<Student | null>(null); // Student being deleted
   const [form, setForm] = useState<StudentForm>(emptyForm);     // Form input values
   const [saving, setSaving] = useState(false);                  // Is the form being saved?
-  const [dark, setDark] = useState(false);                      // Dark mode on/off
+  const [dark, setDark] = useState(() => {
+    return localStorage.getItem("studenthub_theme") === "dark";
+  });
   const [mobileNav, setMobileNav] = useState(false);            // Mobile menu open/closed
   const [currentView, setCurrentView] = useState<View>("overview"); // Current page
+
+  useEffect(() => {
+    localStorage.setItem("studenthub_theme", dark ? "dark" : "light");
+  }, [dark]);
 
   // Labels and icons for each view
   const VIEW_LABELS: Record<View, string> = {
@@ -148,8 +122,7 @@ export default function App() {
     setLoading(true);
     setError("");
     try {
-      const data = await request<Student[] | { items?: Student[]; students?: Student[] }>("/students/");
-      const list = Array.isArray(data) ? data : data.items ?? data.students ?? [];
+      const list = await getStudents();
       setStudents(list);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to load students.");
@@ -170,7 +143,7 @@ export default function App() {
 
   // Students that match the search and course filter
   const filtered = useMemo(() => students.filter(s => {
-    const searchMatch = `${s.name} ${s.email} ${s.phone} ${s.course} ${s.id}`.toLowerCase().includes(query.toLowerCase().trim());
+    const searchMatch = `${s.name ?? ""} ${s.email ?? ""} ${s.phone ?? ""} ${s.course ?? ""} ${s.id}`.toLowerCase().includes(query.toLowerCase().trim());
     return searchMatch && (courseFilter === "all" || s.course === courseFilter);
   }), [students, query, courseFilter]);
 
@@ -179,10 +152,13 @@ export default function App() {
   const currentPage = Math.min(page, totalPages);
   const visibleStudents = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
-  // Course statistics (for the courses page)
-  const courseCounts = useMemo(() => courses.map(course => ({
+  // All courses statistics
+  const allCourseCounts = useMemo(() => courses.map(course => ({
     course, count: students.filter(s => s.course === course).length,
-  })).sort((a, b) => b.count - a.count).slice(0, 4), [courses, students]);
+  })).sort((a, b) => b.count - a.count), [courses, students]);
+
+  // Top course statistics (for the overview page)
+  const courseCounts = useMemo(() => allCourseCounts.slice(0, 4), [allCourseCounts]);
 
   // Most recently added students (for the reports page)
   const recentStudents = [...students].slice(-4).reverse();
@@ -203,6 +179,7 @@ export default function App() {
   function openCreate() {
     setEditing(null);
     setForm(emptyForm);
+    setModalError("");
     setModalOpen(true);
   }
 
@@ -211,11 +188,12 @@ export default function App() {
     setEditing(student);
     setForm({
       name: student.name ?? "",
-      date_of_birth: student.date_of_birth?.slice(0, 10) ?? "",
+      date_of_birth: student.date_of_birth ? student.date_of_birth.split("T")[0] : "",
       email: student.email ?? "",
       phone: student.phone ?? "",
       course: student.course ?? "",
     });
+    setModalError("");
     setModalOpen(true);
   }
 
@@ -223,30 +201,31 @@ export default function App() {
   async function submitForm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
+    setModalError("");
     setNotice("");
 
-    const payload: Record<string, unknown> = {
+    const payload = {
       name: form.name.trim(),
       date_of_birth: form.date_of_birth || null,
       email: form.email.trim(),
-      phone: form.phone.trim(),
+      phone: form.phone.trim() || null,
       course: form.course.trim(),
     };
 
     try {
       if (editing) {
         // Update existing student
-        await request(`/students/${editing.id}`, { method: "PUT", body: JSON.stringify(payload) });
+        await updateStudent(editing.id, payload);
         setNotice("Student details updated successfully.");
       } else {
         // Create new student
-        await request("/students/", { method: "POST", body: JSON.stringify(payload) });
+        await createStudent(payload);
         setNotice("Student added successfully.");
       }
       setModalOpen(false);
       await loadStudents();   // Refresh the list
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to save student.");
+      setModalError(e instanceof Error ? e.message : "Unable to save student.");
     } finally {
       setSaving(false);
     }
@@ -259,7 +238,7 @@ export default function App() {
   async function confirmDelete() {
     if (!deleting) return;
     try {
-      await request(`/students/${deleting.id}`, { method: "DELETE" });
+      await deleteStudent(deleting.id);
       setStudents(old => old.filter(s => s.id !== deleting.id));
       setNotice(`${deleting.name} was deleted.`);
       setDeleting(null);
@@ -343,6 +322,9 @@ export default function App() {
 
         <div className="page-content">
 
+          {notice && <div className="notice success-notice" role="status"><span>✓</span>{notice}<button aria-label="Dismiss notification" onClick={() => setNotice("")}><Icon name="close"/></button></div>}
+          {error && <div className="notice error-notice" role="alert"><span>!</span><div><strong>Something needs your attention</strong><p>{error}</p><button className="text-button" onClick={() => void loadStudents()}>Try again</button></div><button aria-label="Dismiss error" onClick={() => setError("")}><Icon name="close"/></button></div>}
+
           {/* ---------- OVERVIEW PAGE ---------- */}
           {currentView === "overview" && (
             <>
@@ -354,9 +336,6 @@ export default function App() {
                 </div>
                 <button className="primary-button" onClick={openCreate}><Icon name="plus"/> Add student</button>
               </section>
-
-              {notice && <div className="notice success-notice" role="status"><span>✓</span>{notice}<button aria-label="Dismiss notification" onClick={() => setNotice("")}><Icon name="close"/></button></div>}
-              {error && <div className="notice error-notice" role="alert"><span>!</span><div><strong>Something needs your attention</strong><p>{error}</p><button className="text-button" onClick={() => void loadStudents()}>Try again</button></div><button aria-label="Dismiss error" onClick={() => setError("")}><Icon name="close"/></button></div>}
 
               <section className="stats-grid" aria-label="Student statistics">
                 <article className="stat-card"><div className="stat-top"><span className="stat-icon violet"><Icon name="users"/></span><span className="stat-kicker">ALL RECORDS</span></div><div className="stat-number">{loading ? "—" : totalStudents.toLocaleString()}</div><div className="stat-footer"><strong>Total students</strong><span className="stat-note">In your database</span></div><div className="stat-decoration decoration-violet"/></article>
@@ -391,7 +370,7 @@ export default function App() {
                       {loading && Array.from({length: 4}, (_, i) => <tr key={`loading-${i}`}><td colSpan={5}><div className="skeleton-row"><span/><span/><span/></div></td></tr>)}
                       {!loading && visibleStudents.map((student, index) => <tr key={student.id}>
                         <td><div className="student-cell"><div className={`student-avatar avatar-${index % 5}`}>{initials(student.name)}</div><div className="student-identity"><strong>{student.name}</strong><span>ID #{student.id}</span></div></div></td>
-                        <td><div className="contact-cell"><span>{student.email}</span><small>{student.phone}</small></div></td>
+                        <td><div className="contact-cell"><span>{student.email}</span><small>{student.phone || "No phone"}</small></div></td>
                         <td><span className="course-badge">{student.course || "Unassigned"}</span></td>
                         <td><span className="age-value">{student.age ?? getAge(student.date_of_birth) ?? "—"}</span></td>
                         <td><div className="row-actions"><button className="row-action edit-action" onClick={() => openEdit(student)} aria-label={`Edit ${student.name}`} title="Edit"><Icon name="edit"/></button><button className="row-action delete-action" onClick={() => setDeleting(student)} aria-label={`Delete ${student.name}`} title="Delete"><Icon name="trash"/></button></div></td>
@@ -423,7 +402,7 @@ export default function App() {
             <section className="content-grid" style={{ gridTemplateColumns: "1fr" }}>
               <article className="panel course-panel">
                 <div className="panel-heading compact-heading"><div><h2>Course overview</h2><p>Students by course</p></div><span className="mini-icon"><Icon name="chart"/></span></div>
-                {courseCounts.length ? <div className="course-list">{courseCounts.map((item, i) => <div className="course-item" key={item.course}><div className="course-item-top"><span className="course-dot" style={{background:["#7667E8","#20A695","#E9A23B","#E879A9"][i % 4]}}/><span className="course-name">{item.course}</span><strong>{item.count}</strong></div><div className="progress-track"><div className="progress-fill" style={{width:`${totalStudents ? item.count / totalStudents * 100 : 0}%`,background:["#7667E8","#20A695","#E9A23B","#E879A9"][i % 4]}}/></div></div>)}</div> : <div className="small-empty">Course data will appear when students are added.</div>}
+                {allCourseCounts.length ? <div className="course-list">{allCourseCounts.map((item, i) => <div className="course-item" key={item.course}><div className="course-item-top"><span className="course-dot" style={{background:["#7667E8","#20A695","#E9A23B","#E879A9"][i % 4]}}/><span className="course-name">{item.course}</span><strong>{item.count}</strong></div><div className="progress-track"><div className="progress-fill" style={{width:`${totalStudents ? item.count / totalStudents * 100 : 0}%`,background:["#7667E8","#20A695","#E9A23B","#E879A9"][i % 4]}}/></div></div>)}</div> : <div className="small-empty">Course data will appear when students are added.</div>}
                 <div className="panel-bottom-note"><span className="note-check">✓</span> Based on loaded student records</div>
               </article>
             </section>
@@ -440,7 +419,7 @@ export default function App() {
 
               <article className="panel course-panel" style={{ marginTop: 24 }}>
                 <div className="panel-heading compact-heading"><div><h2>Course distribution</h2><p>Students enrolled per course</p></div><span className="mini-icon"><Icon name="chart"/></span></div>
-                {courseCounts.length ? <div className="course-list">{courseCounts.map((item, i) => <div className="course-item" key={item.course}><div className="course-item-top"><span className="course-dot" style={{background:["#7667E8","#20A695","#E9A23B","#E879A9"][i % 4]}}/><span className="course-name">{item.course}</span><strong>{item.count}</strong></div><div className="progress-track"><div className="progress-fill" style={{width:`${totalStudents ? item.count / totalStudents * 100 : 0}%`,background:["#7667E8","#20A695","#E9A23B","#E879A9"][i % 4]}}/></div></div>)}</div> : <div className="small-empty">Course data will appear when students are added.</div>}
+                {allCourseCounts.length ? <div className="course-list">{allCourseCounts.map((item, i) => <div className="course-item" key={item.course}><div className="course-item-top"><span className="course-dot" style={{background:["#7667E8","#20A695","#E9A23B","#E879A9"][i % 4]}}/><span className="course-name">{item.course}</span><strong>{item.count}</strong></div><div className="progress-track"><div className="progress-fill" style={{width:`${totalStudents ? item.count / totalStudents * 100 : 0}%`,background:["#7667E8","#20A695","#E9A23B","#E879A9"][i % 4]}}/></div></div>)}</div> : <div className="small-empty">Course data will appear when students are added.</div>}
                 <div className="panel-bottom-note"><span className="note-check">✓</span> Based on loaded student records</div>
               </article>
             </section>
@@ -454,6 +433,11 @@ export default function App() {
         <section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="student-modal-title">
           <div className="modal-header"><div><span className="modal-eyebrow">{editing ? "UPDATE RECORD" : "NEW RECORD"}</span><h2 id="student-modal-title">{editing ? "Edit student" : "Add a student"}</h2><p>{editing ? "Update the student's information below." : "Fill in the details to create a student record."}</p></div><button className="icon-button" onClick={() => setModalOpen(false)} aria-label="Close dialog"><Icon name="close"/></button></div>
           <form onSubmit={submitForm}>
+            {modalError && (
+              <div style={{ margin: "16px 26px 0", padding: "10px 14px", background: "#fff0f0", color: "#a52c3a", borderRadius: 8, fontSize: 11, border: "1px solid #ffdada" }} role="alert">
+                ⚠️ {modalError}
+              </div>
+            )}
             <div className="form-grid">
               <label className="form-field full-field"><span>Full name <b>*</b></span><input autoFocus required minLength={2} maxLength={100} value={form.name} onChange={e => setForm({...form, name:e.target.value})} placeholder="e.g. Aanya Sharma"/></label>
               <label className="form-field"><span>Email address <b>*</b></span><input required type="email" value={form.email} onChange={e => setForm({...form,email:e.target.value})} placeholder="name@example.com"/></label>
