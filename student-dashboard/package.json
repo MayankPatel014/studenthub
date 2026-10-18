@@ -1,16 +1,12 @@
-# Student Dashboard - Frontend
-# Built with Vite + React + TypeScript
-# Talks to the FastAPI backend at http://localhost:8000
-
 {
   "name": "student-dashboard",
   "private": true,
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",                    # Start the development server
-    "build": "tsc && vite build",     # Type-check and build for production
-    "preview": "vite preview"         # Preview the production build
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
   },
   "dependencies": {
     "react": "^18.2.0",
