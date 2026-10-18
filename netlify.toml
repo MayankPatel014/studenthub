@@ -1,6 +1,6 @@
 [build]
   base = "student-dashboard"
-  publish = "student-dashboard/dist"
+  publish = "dist"
   command = "npm install && npm run build"
 
 [functions]
